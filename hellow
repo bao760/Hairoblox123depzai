@@ -1,304 +1,87 @@
---[[ 
-  Full Fixed Script:
-  - NoClip (không tự tắt, toggle bằng N hoặc nút)
-  - Hop Server (ưu tiên server trống, duyệt nhiều trang, khóa nút)
-  - Throttle ensure CanCollide off để ổn định
-  Note: Không override vị trí (an toàn hơn). 
-  Paste vào executor và chạy.
-]]
+--[[
+    NoClip + Hop Server (Bypass Anti-Cheat)
+    Code by SDVT
+--]]
 
-if not game:IsLoaded() then game.Loaded:Wait() end
+-- GUI
+local ScreenGui = Instance.new("ScreenGui")
+local Frame = Instance.new("Frame")
+local NoclipBtn = Instance.new("TextButton")
+local HopBtn = Instance.new("TextButton")
 
--- Services
+ScreenGui.Parent = game:GetService("CoreGui")
+Frame.Parent = ScreenGui
+Frame.Size = UDim2.new(0, 200, 0, 100)
+Frame.Position = UDim2.new(0.5, -100, 0.5, -50)
+Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Frame.Active = true
+Frame.Draggable = true
+
+NoclipBtn.Parent = Frame
+NoclipBtn.Size = UDim2.new(1, -10, 0, 40)
+NoclipBtn.Position = UDim2.new(0, 5, 0, 5)
+NoclipBtn.Text = "Toggle NoClip"
+NoclipBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+NoclipBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+HopBtn.Parent = Frame
+HopBtn.Size = UDim2.new(1, -10, 0, 40)
+HopBtn.Position = UDim2.new(0, 5, 0, 50)
+HopBtn.Text = "Hop Server"
+HopBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+HopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+-- NoClip System (Bypass)
+local noclipEnabled = false
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
 
-local player = Players.LocalPlayer
-if not player then return end
-
--- ===== CONFIG =====
-local UPDATE_THROTTLE = 0.18       -- giây: throttle khi đảm bảo CanCollide=false
-local MAX_SERVER_PAGES = 8         -- số trang servers để duyệt (mỗi trang limit=100)
-local SERVER_PAGE_LIMIT = 100
--- ==================
-
--- State
-local noclip = false
-local changedParts = {}            -- lưu các part đã đổi để restore
-local descendantConn = nil
-local throttleAccum = 0
-local hrp = nil
-local humanoid = nil
-
--- GUI (gọn nhẹ, đặt trong PlayerGui để tương thích executor)
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FixedExecutorUI"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = player:WaitForChild("PlayerGui")
-
-local frame = Instance.new("Frame", screenGui)
-frame.Size = UDim2.new(0, 320, 0, 170)
-frame.Position = UDim2.new(0.03, 0, 0.14, 0)
-frame.BackgroundColor3 = Color3.fromRGB(24,24,28)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
-
-local title = Instance.new("TextLabel", frame)
-title.Position = UDim2.new(0, 12, 0, 8)
-title.Size = UDim2.new(1, -24, 0, 28)
-title.BackgroundTransparency = 1
-title.Text = "⚡ Fixed NoClip + Hop"
-title.Font = Enum.Font.GothamBold
-title.TextSize = 16
-title.TextColor3 = Color3.fromRGB(240,240,240)
-title.TextXAlignment = Enum.TextXAlignment.Left
-
-local statusLabel = Instance.new("TextLabel", frame)
-statusLabel.Position = UDim2.new(0, 12, 0, 36)
-statusLabel.Size = UDim2.new(1, -24, 0, 20)
-statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "NoClip: ❌ OFF"
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.TextSize = 14
-statusLabel.TextColor3 = Color3.fromRGB(255,120,120)
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-local infoLabel = Instance.new("TextLabel", frame)
-infoLabel.Position = UDim2.new(0,12,0,56)
-infoLabel.Size = UDim2.new(1, -24, 0, 18)
-infoLabel.BackgroundTransparency = 1
-infoLabel.Text = "Throttle: "..tostring(UPDATE_THROTTLE).."s | Server pages: "..tostring(MAX_SERVER_PAGES)
-infoLabel.Font = Enum.Font.Gotham
-infoLabel.TextSize = 12
-infoLabel.TextColor3 = Color3.fromRGB(170,170,170)
-infoLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-local toggleBtn = Instance.new("TextButton", frame)
-toggleBtn.Position = UDim2.new(0.05,0,0,86)
-toggleBtn.Size = UDim2.new(0.9,0,0,36)
-toggleBtn.Text = "🔁 Toggle NoClip (N)"
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 14
-toggleBtn.BackgroundColor3 = Color3.fromRGB(60,130,255)
-toggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
-toggleBtn.BorderSizePixel = 0
-Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,8)
-
-local hopBtn = Instance.new("TextButton", frame)
-hopBtn.Position = UDim2.new(0.05,0,0,128)
-hopBtn.Size = UDim2.new(0.9,0,0,34)
-hopBtn.Text = "🌍 Hop Server (Find Empty)"
-hopBtn.Font = Enum.Font.GothamBold
-hopBtn.TextSize = 14
-hopBtn.BackgroundColor3 = Color3.fromRGB(40,200,120)
-hopBtn.TextColor3 = Color3.fromRGB(255,255,255)
-hopBtn.BorderSizePixel = 0
-Instance.new("UICorner", hopBtn).CornerRadius = UDim.new(0,8)
-
--- Helper: update refs
-local function updateRefs()
-    local char = player.Character
-    if not char then return end
-    hrp = char:FindFirstChild("HumanoidRootPart")
-    humanoid = char:FindFirstChildOfClass("Humanoid")
-end
-player.CharacterAdded:Connect(function()
-    task.wait(0.12)
-    updateRefs()
-    -- nếu respawn trong khi noclip on, ta không tự tắt (theo yêu cầu) nhưng restore changedParts
-    -- để an toàn, reset changedParts (new character)
-    changedParts = {}
-    if descendantConn then
-        pcall(function() descendantConn:Disconnect() end)
-        descendantConn = nil
-    end
-end)
-updateRefs()
-
--- Enable noclip once: disable CanCollide and remember parts
-local function enableNoClipOnce()
-    updateRefs()
-    local char = player.Character
-    if not char then return end
-
-    -- clear list and populate
-    changedParts = {}
-    for _, v in ipairs(char:GetDescendants()) do
-        if v:IsA("BasePart") then
-            if v.CanCollide then
-                table.insert(changedParts, v)
-                pcall(function() v.CanCollide = false end)
-            end
-        end
-    end
-
-    -- listen to new parts and disable their collisions (store them)
-    if descendantConn then
-        pcall(function() descendantConn:Disconnect() end)
-        descendantConn = nil
-    end
-    descendantConn = char.DescendantAdded:Connect(function(newDesc)
-        if not noclip then return end
-        if newDesc and newDesc:IsA("BasePart") then
-            if newDesc.CanCollide then
-                table.insert(changedParts, newDesc)
-                pcall(function() newDesc.CanCollide = false end)
-            end
-        end
-    end)
-
-    -- optional: lightly try to set humanoid physics once (commented default off)
-    -- pcall(function() if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end end)
-end
-
--- Disable noclip: restore saved parts only
-local function disableNoClipRestore()
-    for _, p in ipairs(changedParts) do
-        pcall(function()
-            if p and p.Parent then p.CanCollide = true end
-        end)
-    end
-    changedParts = {}
-    if descendantConn then
-        pcall(function() descendantConn:Disconnect() end)
-        descendantConn = nil
-    end
-end
-
--- Public toggle (no auto-disable)
-local function setNoClip(state)
-    if state == noclip then return end
-    noclip = state
-    if noclip then
-        statusLabel.Text = "NoClip: ✅ ON"
-        statusLabel.TextColor3 = Color3.fromRGB(120,240,120)
-        pcall(enableNoClipOnce)
+local function toggleNoclip()
+    noclipEnabled = not noclipEnabled
+    if noclipEnabled then
+        NoclipBtn.Text = "NoClip: ON"
     else
-        statusLabel.Text = "NoClip: ❌ OFF"
-        statusLabel.TextColor3 = Color3.fromRGB(255,120,120)
-        pcall(disableNoClipRestore)
+        NoclipBtn.Text = "NoClip: OFF"
     end
 end
 
--- UI + key bind
-toggleBtn.MouseButton1Click:Connect(function() setNoClip(not noclip) end)
-UIS.InputBegan:Connect(function(inp, gpe)
-    if gpe then return end
-    if inp.KeyCode == Enum.KeyCode.N then
-        setNoClip(not noclip)
-    end
-end)
+NoclipBtn.MouseButton1Click:Connect(toggleNoclip)
 
--- Throttle loop: đảm bảo những part bị bật lại vì game đặc biệt sẽ được set false lại nhưng throttled
-RunService.Heartbeat:Connect(function(dt)
-    if not noclip then return end
-    throttleAccum = throttleAccum + dt
-    if throttleAccum < UPDATE_THROTTLE then return end
-    throttleAccum = 0
-
-    local char = player.Character
-    if not char then return end
-    for _, v in ipairs(char:GetDescendants()) do
-        if v:IsA("BasePart") then
-            if v.CanCollide then
-                -- chỉ set lại khi thật sự cần, pcall để an toàn
-                pcall(function() v.CanCollide = false end)
-                table.insert(changedParts, v)
+RunService.Stepped:Connect(function()
+    if noclipEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local HRP = LocalPlayer.Character.HumanoidRootPart
+        -- Fake collision bypass
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
             end
+        end
+        -- Micro-teleport to prevent rubberband
+        local moveDir = LocalPlayer.Character:FindFirstChildOfClass("Humanoid").MoveDirection
+        if moveDir.Magnitude > 0 then
+            HRP.CFrame = HRP.CFrame + moveDir * 0.5
         end
     end
 end)
 
--- Hop Server (fix lỗi + multiple pages + lock button)
-local isHopping = false
-local function findBestServerAndHop()
-    if isHopping then return end
-    isHopping = true
-    hopBtn.Text = "⏳ Searching..."
-    hopBtn.Active = false
-    hopBtn.AutoButtonColor = false
-    hopBtn.BackgroundColor3 = Color3.fromRGB(140,140,140)
+-- Hop Server System
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local lastServer = nil
 
-    task.spawn(function()
-        local placeId = game.PlaceId
-        local cursor = nil
-        local bestId = nil
-        local bestPlayers = math.huge
-
-        for page=1, MAX_SERVER_PAGES do
-            local url = "https://games.roblox.com/v1/games/"..tostring(placeId).."/servers/Public?limit="..SERVER_PAGE_LIMIT
-            if cursor then
-                url = url .. "&cursor=" .. tostring(cursor)
-            end
-
-            local ok, res = pcall(function() 
-                -- small pcall to handle errors
-                return HttpService:JSONDecode(game:HttpGet(url))
-            end)
-
-            if not ok or not res or not res.data then
-                break
-            end
-
-            for _, s in ipairs(res.data) do
-                if s.id and s.id ~= game.JobId then
-                    -- ưu tiên server trống
-                    if s.playing == 0 then
-                        bestId = s.id
-                        bestPlayers = 0
-                        break
-                    end
-                    -- nếu không có 0 thì chọn nhỏ nhất
-                    if type(s.playing) == "number" and s.playing < bestPlayers then
-                        bestPlayers = s.playing
-                        bestId = s.id
-                    end
-                end
-            end
-
-            if bestPlayers == 0 then break end
-            cursor = res.nextPageCursor
-            if not cursor then break end
-            task.wait(0.08) -- nhẹ nhàng chờ để tránh rate-limit
+local function hopServer()
+    local gameId = game.PlaceId
+    local servers = HttpService:JSONDecode(game:HttpGet(
+        "https://games.roblox.com/v1/games/" .. gameId .. "/servers/Public?sortOrder=Asc&limit=100"
+    ))
+    for _, server in pairs(servers.data) do
+        if server.playing < server.maxPlayers and server.id ~= lastServer then
+            lastServer = server.id
+            TeleportService:TeleportToPlaceInstance(gameId, server.id, LocalPlayer)
+            break
         end
-
-        if bestId then
-            pcall(function()
-                TeleportService:TeleportToPlaceInstance(placeId, bestId, player)
-            end)
-            -- khi teleport thành công thì game chuyển server, script sẽ unload
-            return
-        else
-            -- reset UI nếu không tìm thấy
-            hopBtn.Text = "🌍 Hop Server (Find Empty)"
-            hopBtn.Active = true
-            hopBtn.AutoButtonColor = true
-            hopBtn.BackgroundColor3 = Color3.fromRGB(40,200,120)
-            isHopping = false
-        end
-    end)
+    end
 end
 
-hopBtn.MouseButton1Click:Connect(findBestServerAndHop)
-
--- Safety: restore on script unload or player leave
-local function cleanup()
-    pcall(disableNoClipRestore)
-    if descendantConn then pcall(function() descendantConn:Disconnect() end) end
-    pcall(function() screenGui:Destroy() end)
-end
-
-game:BindToClose(function()
-    cleanup()
-end)
-
-player.Idled:Connect(function() 
-    -- nothing forced; do not auto-disable to respect user request
-end)
-
-print("Fixed NoClip + Hop loaded. Toggle with N or button. Hop button searches empty/low servers.")
+HopBtn.MouseButton1Click:Connect(hopServer)
